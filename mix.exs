@@ -24,8 +24,8 @@ defmodule VowpalKingpin.MixProject do
     [
       {:plug_cowboy, "~> 2.0"},
       {:xandra, "~> 0.10"},
-        {:dialyxir, "~> 1.0.0-rc.4", only: [:dev], runtime: false},
-      {:vowpal_fleet, "~> 0.1.3"}
+      {:dialyxir, "~> 1.0.0-rc.4", only: [:dev], runtime: false},
+      {:vowpal_fleet, "~> 0.1.4"}
     ]
   end
 end
