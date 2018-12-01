@@ -3,7 +3,6 @@ defmodule VowpalKingpin do
   require VowpalFleet
 
   @type features :: list(VowpalFleet.Types.namespace())
-  def
 
   def start(model_id, explore) do
     Mnesia.start()
@@ -65,11 +64,14 @@ defmodule VowpalKingpin do
       pred
       |> Enum.map(fn prob ->
         # FIXME
-        if rand() < prob do
-          {prob, true}
-        else
-          {prob, false}
-        end
+        chosen =
+          if rand() < prob do
+            true
+          else
+            false
+          end
+
+        {prob, chosen}
       end)
 
     model = Map.merge(model, %{:arms => arms})
