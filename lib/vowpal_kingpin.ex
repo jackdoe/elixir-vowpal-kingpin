@@ -3,10 +3,11 @@ defmodule VowpalKingpin do
   require VowpalFleet
 
   @type features :: list(VowpalFleet.Types.namespace())
+  def
 
   def start(model_id, explore) do
-    Mnesia.create_schema([{:model_id, node()}])
     Mnesia.start()
+    Mnesia.create_schema([{:model_id, node()}])
     Mnesia.create_table(VowpalKingpin, attributes: [:session_id, :state, :created_at])
 
     VowpalFleet.start_worker(model_id, node(), %{
@@ -64,7 +65,7 @@ defmodule VowpalKingpin do
       pred
       |> Enum.map(fn prob ->
         # FIXME
-        if rand() > 0.5 do
+        if rand() < prob do
           {prob, true}
         else
           {prob, false}

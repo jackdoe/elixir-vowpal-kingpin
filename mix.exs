@@ -14,7 +14,7 @@ defmodule VowpalKingpin.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger, :plug_cowboy, :xandra, :vowpal_fleet],
+      extra_applications: [:logger, :vowpal_fleet],
       mod: {VowpalKingpin.Application, []}
     ]
   end
@@ -22,8 +22,6 @@ defmodule VowpalKingpin.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:plug_cowboy, "~> 2.0"},
-      {:xandra, "~> 0.10"},
       {:dialyxir, "~> 1.0.0-rc.4", only: [:dev], runtime: false},
       {:vowpal_fleet, "~> 0.1.4"}
     ]
