@@ -1,82 +1,108 @@
-defmodule Session do
-  # XXX: this seems weird, not sure if i should just define structs or keep it like that
-  # but couldnt find how to properly type structs
-
-  @type features() :: list(VowpalFleet.Type.namespace())
-  @type probability :: float()
-  @type expire_stamp :: integer() | float()
-  @type position :: integer()
-  @type cost :: integer()
-  @type arm_id :: any() | integer()
-  @type pull :: {arm_id(), probability(), position(), features()}
-  @type round :: {list(pull()), expire_stamp(), cost(), features()}
-  @type session :: {String.t(), %{atom() => round()}}
-
-  def generate_id do
-    # FIXME: use timeuuid so it fits nicely in cassandra
-    random_number = :rand.uniform()
-    "#{random_number}"
-  end
-
-  def new() do
-    {generate_id(), %{}}
-  end
-
-  @spec new_round(Session.features()) :: Session.round()
-  def new_round(common_features) do
-    new_round(:os.system_time(:millisecond) / 1000 + 60, common_features)
-  end
-
-  @spec new_round(Session.expire_stamp(), Session.features()) :: Session.round()
-  def new_round(expire_stamp, common_features) do
-    {[], expire_stamp, 0, common_features}
-  end
-
-  @spec add_pull_to_round(Session.round(), Session.pull()) :: Session.round()
-  def add_pull_to_round(r, pull) do
-    {pulls, expire_at, cost, features} = r
-    {pulls ++ [pull], expire_at, cost, features}
-  end
-
-  @spec add_round_to_session(Session.session(), atom(), Session.round()) :: Session.session()
-  def add_round_to_session(session, model_id, round) do
-    {id, rounds} = session
-    updated = Map.put(rounds, model_id, round)
-    {id, updated}
-  end
-
-  @spec expiring(Session.session(), integer()) :: list(Session.round())
-  def expiring(session, delta \\ 0) do
-    {id, rounds} = session
-    now = :os.system_time(:millisecond) / 1000 - delta
-
-    updated =
-      rounds
-      |> Enum.filter(fn {_, {_, expiring, _, _}} ->
-        expiring < now
-      end)
-
-    updated
-  end
-
-  @spec expire(Session.session(), integer()) :: Session.session()
-  def expire(session, delta \\ 0) do
-    {id, rounds} = session
-    now = :os.system_time(:millisecond) / 1000 - delta
-
-    updated =
-      rounds
-      |> Enum.filter(fn {_, {_, expiring, _, _}} ->
-        expiring >= now
-      end)
-      |> Map.new()
-
-    {id, updated}
-  end
-end
-
 defmodule VowpalKingpin do
-  def session do
-    :world
+  alias :mnesia, as: Mnesia
+  require VowpalFleet
+
+  @type features :: list(VowpalFleet.Types.namespace())
+
+  def start(model_id, explore) do
+    Mnesia.create_schema([{:model_id, node()}])
+    Mnesia.start()
+    Mnesia.create_table(VowpalKingpin, attributes: [:session_id, :state, :created_at])
+
+    VowpalFleet.start_worker(model_id, node(), %{
+      :autosave => 300_000,
+      :args => [
+        "--random_seed",
+        "123",
+        "--cb_explore",
+        "#{explore}",
+        "--cover",
+        "3",
+        "--num_children",
+        "1"
+      ]
+    })
+  end
+
+  def fetch_session(sid) do
+    s = Mnesia.dirty_read({VowpalKingpin, sid})
+
+    if s == [] do
+      %{}
+    else
+      {_, _, state, _} = Enum.at(s, 0)
+      state
+    end
+  end
+
+  def now() do
+    :os.system_time(:millisecond)
+  end
+
+  def fetch_model_from_session(s, model_id, features) do
+    # features => [{country_en...}], arms => {probability, true/false chosen not chosen},{probability, false}
+    m = Map.get(s, model_id, %{:features => [], :arms => []})
+
+    if features == [] do
+      m
+    else
+      # what if the features changed? make new pull or use the previous one
+      Map.merge(m, %{:features => features})
+    end
+  end
+
+  def rand() do
+    :rand.uniform()
+  end
+
+  def predict(sid, model_id, features) do
+    s = fetch_session(sid)
+    model = fetch_model_from_session(s, model_id, features)
+    pred = VowpalFleet.predict(model_id, features)
+
+    arms =
+      pred
+      |> Enum.map(fn prob ->
+        # FIXME
+        if rand() > 0.5 do
+          {prob, true}
+        else
+          {prob, false}
+        end
+      end)
+
+    model = Map.merge(model, %{:arms => arms})
+    s = Map.merge(s, %{model_id => model})
+    Mnesia.dirty_write({VowpalKingpin, sid, s, now()})
+    s
+  end
+
+  def track(sid, model_id) do
+    track(sid, model_id, 0, 1)
+  end
+
+  def track(sid, model_id, cost_chosen, cost_not_chosen) do
+    s = fetch_session(sid)
+    model = fetch_model_from_session(s, model_id, [])
+
+    actions_to_train =
+      Map.get(model, :arms, [])
+      |> Stream.with_index()
+      |> Enum.map(fn {{prob, chosen}, idx} ->
+        cost =
+          case chosen do
+            true ->
+              cost_chosen
+
+            false ->
+              cost_not_chosen
+          end
+
+        {idx + 1, cost, prob}
+      end)
+
+    if actions_to_train != [] do
+      VowpalFleet.train(model_id, actions_to_train, Map.get(model, :features))
+    end
   end
 end
