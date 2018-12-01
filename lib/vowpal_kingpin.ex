@@ -88,6 +88,7 @@ defmodule VowpalKingpin do
     s = fetch_session(sid)
     model = fetch_model_from_session(s, model_id, [])
 
+    # FIXME prob is actual prob = 1/n_actions
     actions_to_train =
       Map.get(model, :arms, [])
       |> Stream.with_index()
