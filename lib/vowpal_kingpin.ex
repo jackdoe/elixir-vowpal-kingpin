@@ -39,7 +39,7 @@ defmodule VowpalKingpin do
   end
 
   def delete_session(sid, model_id) do
-    s = Mnesia.dirty_read({VowpalKingpin, get_session_key(sid, model_id)})
+    Mnesia.dirty_delete({VowpalKingpin, get_session_key(sid, model_id)})
   end
 
   def fetch_session(sid, model_id, features) do
@@ -133,10 +133,14 @@ defmodule VowpalKingpin do
     track(sid, model_id, clicked_action_id, 100)
   end
 
-  # lets say we have click/convertion on one of the actions
   def track(sid, model_id, clicked_action_id, cost_not_clicked) do
     s = fetch_session(sid, model_id, [])
+    track_session(s, clicked_action_id, cost_not_clicked)
+    delete_session(sid, model_id)
+  end
 
+  # lets say we have click/convertion on one of the actions
+  defp track_session(s, clicked_action_id, cost_not_clicked) do
     actions_to_train =
       Map.get(s, :actions, [])
       |> Enum.map(fn {action_id, prob, chosen} ->
@@ -157,19 +161,25 @@ defmodule VowpalKingpin do
       end)
 
     if actions_to_train != [] do
-      VowpalFleet.train(model_id, actions_to_train, Map.get(s, :features))
-      delete_session(sid, model_id)
+      VowpalFleet.train(Map.get(s, :model), actions_to_train, Map.get(s, :features))
     end
   end
 
   # expire all sessions with epoch before specified one, and attribute cost to all chosen (non clicked) actions
-  def timeout(epoch) do
+  def timeout(epoch, cost_not_clicked) do
     Mnesia.transaction(fn ->
-      IO.inspect(
-        Mnesia.select(VowpalKingpin, [
-          {{Session, :"$1", :"$2", :"$3"}, [{:>, :"$3", epoch}], [:"$$"]}
-        ])
-      )
+      expired =
+        IO.inspect(
+          Mnesia.select(VowpalKingpin, [
+            {{VowpalKingpin, :"$1", :"$2", :"$3"}, [{:<, :"$3", epoch}], [:"$$"]}
+          ])
+        )
+
+      expired
+      |> Enum.each(fn {key, s, _} ->
+        track_session(s, -1, cost_not_clicked)
+        Mnesia.delete({VowpalKingpin, key})
+      end)
     end)
   end
 end
