@@ -38,6 +38,10 @@ defmodule VowpalKingpin do
     "#{sid}_#{model_id}"
   end
 
+  def delete_session(sid, model_id) do
+    s = Mnesia.dirty_read({VowpalKingpin, get_session_key(sid, model_id)})
+  end
+
   def fetch_session(sid, model_id, features) do
     s = Mnesia.dirty_read({VowpalKingpin, get_session_key(sid, model_id)})
 
@@ -154,6 +158,7 @@ defmodule VowpalKingpin do
 
     if actions_to_train != [] do
       VowpalFleet.train(model_id, actions_to_train, Map.get(s, :features))
+      delete_session(sid, model_id)
     end
   end
 
