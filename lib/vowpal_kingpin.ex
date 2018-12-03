@@ -127,6 +127,9 @@ defmodule VowpalKingpin do
     track(sid, model_id, clicked_action_id, 100)
   end
 
+  # XXX: what if user clicks to second item after coming back?
+  # is that new pull or same as before
+  # this does not hanle that very well
   def track(sid, model_id, clicked_action_id, cost_not_clicked) do
     s = fetch_session(sid, model_id, [])
     track_session(s, clicked_action_id, cost_not_clicked)
@@ -134,7 +137,9 @@ defmodule VowpalKingpin do
   end
 
   # lets say we have click/convertion on one of the actions
+  # only send to vowpal actions that were possible
   defp track_session(s, clicked_action_id, cost_not_clicked) do
+    # only send *possible* actions to vw
     actions_to_train =
       Map.get(s, :actions, [])
       |> Enum.filter(fn {_, _, chosen} -> chosen end)
@@ -162,6 +167,11 @@ defmodule VowpalKingpin do
 
   # expire all sessions with epoch before specified one, and attribute cost to all chosen (non clicked) actions
   def timeout(epoch, cost_not_clicked) do
+    expired =
+      Mnesia.select(VowpalKingpin, [
+        {{VowpalKingpin, :"$1", :"$2", :"$3"}, [{:<, :"$3", epoch}], [:"$$"]}
+      ])
+
     Mnesia.transaction(fn ->
       expired
       |> Enum.each(fn {key, s, _} ->
