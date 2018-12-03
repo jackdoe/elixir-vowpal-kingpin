@@ -66,30 +66,24 @@ defmodule VowpalKingpin do
     :rand.uniform()
   end
 
-  def choose_many(actions) do
-    base = 1 / length(actions)
-
-    actions
-    |> Enum.map(fn {action_id, prob, _} ->
-      if rand() < prob do
-        {action_id, min(prob + base, 1), true}
-      else
-        {action_id, min(prob + base, 1), false}
-      end
-    end)
-  end
-
   def choose(actions, n) do
-    choose(actions, length(actions), n, [])
+    choose(actions, n, [])
   end
 
-  def choose(actions, total, n, chosen) do
-    if n <= 0 do
+  def choose(actions, n, chosen) do
+    # expects sorted list of actions, sorded by descending probability 
+    if length(chosen) == n || length(actions) == 0 do
       chosen
     else
-      only_non_chosen = actions |> Enum.filter(fn {_, _, is_chosen} -> !is_chosen end)
-      possible = choose_many(only_non_chosen)
-      choose(only_non_chosen, total, n - length(possible), chosen ++ possible)
+      r = rand()
+      c = Enum.find(actions, Enum.at(actions, 0), fn {_, prob} -> prob >= r end)
+      chosen = chosen ++ [c]
+
+      actions =
+        actions
+        |> Enum.filter(fn x -> x != c end)
+
+      choose(actions, n, chosen)
     end
   end
 
@@ -100,20 +94,20 @@ defmodule VowpalKingpin do
     actions =
       pred
       |> Stream.with_index()
-      |> Enum.shuffle()
+      |> Enum.sort(fn {_, pa}, {_, pb} -> pa >= pb end)
       |> Enum.map(fn {prob, idx} ->
-        {idx + 1, prob, false}
+        {idx + 1, prob}
       end)
 
     chosen =
       choose(actions, n)
       |> Enum.take(n)
-      |> Enum.map(fn {action_id, prob, _} -> {action_id, prob} end)
+      |> Enum.map(fn {action_id, prob} -> {action_id, prob} end)
       |> Map.new()
 
     actions =
       actions
-      |> Enum.map(fn {action_id, prob, _} ->
+      |> Enum.map(fn {action_id, prob} ->
         chosen_prob = Map.get(chosen, action_id, 0)
 
         if chosen_prob > 0 do
@@ -143,6 +137,7 @@ defmodule VowpalKingpin do
   defp track_session(s, clicked_action_id, cost_not_clicked) do
     actions_to_train =
       Map.get(s, :actions, [])
+      |> Enum.filter(fn {_, _, chosen} -> chosen end)
       |> Enum.map(fn {action_id, prob, chosen} ->
         cost =
           case chosen do
@@ -168,13 +163,6 @@ defmodule VowpalKingpin do
   # expire all sessions with epoch before specified one, and attribute cost to all chosen (non clicked) actions
   def timeout(epoch, cost_not_clicked) do
     Mnesia.transaction(fn ->
-      expired =
-        IO.inspect(
-          Mnesia.select(VowpalKingpin, [
-            {{VowpalKingpin, :"$1", :"$2", :"$3"}, [{:<, :"$3", epoch}], [:"$$"]}
-          ])
-        )
-
       expired
       |> Enum.each(fn {key, s, _} ->
         track_session(s, -1, cost_not_clicked)
