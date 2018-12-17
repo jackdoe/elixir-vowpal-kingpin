@@ -4,5 +4,5 @@
   "gen_state_machine": {:hex, :gen_state_machine, "2.0.4", "cc31749b8ee50d42c8db7d96c85637c4c9fdc7a007145c8aa2f371c89148a6ca", [:mix], [], "hexpm"},
   "libring": {:hex, :libring, "1.4.0", "41246ba2f3fbc76b3971f6bce83119dfec1eee17e977a48d8a9cfaaf58c2a8d6", [:mix], [], "hexpm"},
   "swarm": {:hex, :swarm, "3.3.1", "b4d29c49310b92b4a84bd3be6a51d9616eaeda1899b7619201d0908d8d789bd8", [:mix], [{:gen_state_machine, "~> 2.0", [hex: :gen_state_machine, repo: "hexpm", optional: false]}, {:libring, "~> 1.0", [hex: :libring, repo: "hexpm", optional: false]}], "hexpm"},
-  "vowpal_fleet": {:hex, :vowpal_fleet, "0.1.5", "cee0de400a4554ea902e152c4e9d8f505b27a963ce24e56ded32f9375d2f35be", [:mix], [{:swarm, "~> 3.0", [hex: :swarm, repo: "hexpm", optional: false]}], "hexpm"},
+  "vowpal_fleet": {:hex, :vowpal_fleet, "0.1.6", "a359c6a7dfd88b2b867fb3751a1261f9966a7af2578a21934c3211e124fa2877", [:mix], [{:swarm, "~> 3.0", [hex: :swarm, repo: "hexpm", optional: false]}], "hexpm"},
 }

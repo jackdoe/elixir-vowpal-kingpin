@@ -15,6 +15,7 @@ defmodule VowpalKingpin do
     Mnesia.add_table_index(VowpalKingpin, :created_at)
   end
 
+  @spec start(atom(), pos_integer(), [node()]) :: :ok
   def start(model_id, bootstrap, mnesia_nodes \\ [node()]) do
     # Application.ensure_all_started(:logger)
     # Application.ensure_all_started(:vowpal_fleet)
@@ -41,15 +42,15 @@ defmodule VowpalKingpin do
     })
   end
 
-  def get_session_key(sid, model_id) do
+  defp get_session_key(sid, model_id) do
     "#{sid}_#{model_id}"
   end
 
-  def delete_session(sid, model_id) do
+  defp delete_session(sid, model_id) do
     Mnesia.dirty_delete({VowpalKingpin, get_session_key(sid, model_id)})
   end
 
-  def fetch_session(sid, model_id, context, items) do
+  defp fetch_session(sid, model_id, context, items) do
     s = Mnesia.dirty_read({VowpalKingpin, get_session_key(sid, model_id)})
 
     if s == [] do
@@ -60,7 +61,7 @@ defmodule VowpalKingpin do
     end
   end
 
-  def now() do
+  defp now() do
     :os.system_time(:millisecond)
   end
 
@@ -83,7 +84,9 @@ defmodule VowpalKingpin do
     end)
   end
 
-  @spec predict(String.t(), atom(), pos_integer(), features, list(item)) :: list({item_id, float})
+  @spec predict(String.t(), atom(), pos_integer(), features, list(item())) :: %{
+          item_id() => float()
+        }
   def predict(sid, model_id, limit, context, items) do
     s = fetch_session(sid, model_id, context, items)
     c = prefix_features("c", context)
@@ -105,10 +108,11 @@ defmodule VowpalKingpin do
     scored
   end
 
-  def merge_features(ctx, {id, features}) do
+  defp merge_features(ctx, {id, features}) do
     ctx ++ prefix_features("i", [{"id", [id]}] ++ features)
   end
 
+  @spec track(String.t(), atom(), list(item_id())) :: :ok
   def track(sid, model_id, clicked_actions) do
     s = Mnesia.dirty_read({VowpalKingpin, get_session_key(sid, model_id)})
 
@@ -125,6 +129,8 @@ defmodule VowpalKingpin do
         nil
         # missing session, ignore
     end
+
+    :ok
   end
 
   defp track_session(%{:context => context, :items => items, :model => model_id}, clicked_actions) do
