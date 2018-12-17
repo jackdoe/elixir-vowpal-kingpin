@@ -5,8 +5,14 @@ defmodule VowpalKingpin do
   @type features :: list(VowpalFleet.Types.namespace())
   @type item_id :: String.t() | integer()
   @type item :: {item_id(), features()}
+  @type session :: %{
+          :context => features(),
+          :model => atom(),
+          :items => list(item()),
+          :now => pos_integer()
+        }
 
-  def start_mnesia(nodes) do
+  def(start_mnesia(nodes)) do
     # FIXME: use config
     Logger.debug("creating mnesia schema")
     Mnesia.create_schema(nodes)
@@ -42,14 +48,17 @@ defmodule VowpalKingpin do
     })
   end
 
+  @spec get_session_key(String.t(), atom()) :: String.t()
   defp get_session_key(sid, model_id) do
     "#{sid}_#{model_id}"
   end
 
+  @spec delete_session(String.t(), atom()) :: String.t()
   defp delete_session(sid, model_id) do
     Mnesia.dirty_delete({VowpalKingpin, get_session_key(sid, model_id)})
   end
 
+  @spec fetch_session(String.t(), atom(), features(), list(item())) :: session()
   defp fetch_session(sid, model_id, context, items) do
     s = Mnesia.dirty_read({VowpalKingpin, get_session_key(sid, model_id)})
 
@@ -65,6 +74,7 @@ defmodule VowpalKingpin do
     :os.system_time(:millisecond)
   end
 
+  @spec prefix_features(String.t(), features()) :: features()
   defp prefix_features(p, namespaces) do
     namespaces
     |> Enum.map(fn {name, features} ->
@@ -108,6 +118,7 @@ defmodule VowpalKingpin do
     scored
   end
 
+  @spec merge_features(features, {item_id, features()}) :: features
   defp merge_features(ctx, {id, features}) do
     ctx ++ prefix_features("i", [{"id", [id]}] ++ features)
   end
@@ -133,12 +144,19 @@ defmodule VowpalKingpin do
     :ok
   end
 
-  defp track_session(%{:context => context, :items => items, :model => model_id}, clicked_actions) do
+  @spec track_session(
+          session(),
+          list(item_id()) | %{item_id() => boolean()}
+        ) :: :ok
+  defp track_session(
+         %{:context => context, :items => items, :model => model_id, :now => _},
+         clicked_items
+       ) do
     clicked =
-      if is_list(clicked_actions) do
-        clicked_actions |> Enum.map(fn e -> {e, true} end) |> Map.new()
+      if is_list(clicked_items) do
+        clicked_items |> Enum.map(fn e -> {e, true} end) |> Map.new()
       else
-        clicked_actions
+        clicked_items
       end
 
     c = prefix_features("c", context)
@@ -153,9 +171,12 @@ defmodule VowpalKingpin do
         VowpalFleet.train(model_id, -1, merged)
       end
     end)
+
+    :ok
   end
 
   # expire all sessions with epoch before specified one, and attribute cost to all chosen (non clicked) actions
+  @spec timeout(pos_integer()) :: :ok
   def timeout(epoch) do
     Mnesia.transaction(fn ->
       expired =
@@ -169,5 +190,7 @@ defmodule VowpalKingpin do
         Mnesia.delete({VowpalKingpin, key})
       end)
     end)
+
+    :ok
   end
 end
