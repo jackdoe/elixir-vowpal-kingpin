@@ -3,6 +3,8 @@ defmodule VowpalKingpin do
   require VowpalFleet
   require Logger
   @type features :: list(VowpalFleet.Types.namespace())
+  @type item_id :: String.t() | integer()
+  @type item :: {item_id(), features()}
 
   def start_mnesia(nodes) do
     # FIXME: use config
@@ -81,22 +83,26 @@ defmodule VowpalKingpin do
     end)
   end
 
+  @spec predict(String.t(), atom(), pos_integer(), features, list(item)) :: list({item_id, float})
   def predict(sid, model_id, limit, context, items) do
     s = fetch_session(sid, model_id, context, items)
     c = prefix_features("c", context)
 
-    out =
+    scored =
       items
-      |> Enum.map(fn %{id: id, features: features} ->
-        score = VowpalFleet.predict(model_id, merge_features(c, {id, features}))
+      |> Enum.map(fn {id, features} ->
+        score = VowpalFleet.predict(model_id, merge_features(c, {id, features})) |> Enum.at(2)
         {id, score}
       end)
       |> Enum.sort(fn {_, pa}, {_, pb} -> pa >= pb end)
       |> Enum.take(limit)
+      |> Map.new()
 
+    filtered = items |> Enum.filter(fn {id, _} -> Map.has_key?(scored, id) end)
+
+    s = Map.merge(s, %{:items => filtered})
     Mnesia.dirty_write({VowpalKingpin, get_session_key(sid, model_id), s, now()})
-
-    out
+    scored
   end
 
   def merge_features(ctx, {id, features}) do
@@ -131,17 +137,16 @@ defmodule VowpalKingpin do
 
     c = prefix_features("c", context)
 
-    v =
-      items
-      |> Enum.map(fn %{id: id, features: features} ->
-        merged = merge_features(c, {id, features})
+    items
+    |> Enum.map(fn {id, features} ->
+      merged = merge_features(c, {id, features})
 
-        if Map.has_key?(clicked, id) do
-          VowpalFleet.train(model_id, 1, merged)
-        else
-          VowpalFleet.train(model_id, -1, merged)
-        end
-      end)
+      if Map.has_key?(clicked, id) do
+        VowpalFleet.train(model_id, 1, merged)
+      else
+        VowpalFleet.train(model_id, -1, merged)
+      end
+    end)
   end
 
   # expire all sessions with epoch before specified one, and attribute cost to all chosen (non clicked) actions
