@@ -12,7 +12,7 @@ defmodule VowpalKingpin do
           :now => pos_integer()
         }
 
-  def(start_mnesia(nodes)) do
+  def start_mnesia(nodes) do
     # FIXME: use config
     Logger.debug("creating mnesia schema")
     Mnesia.create_schema(nodes)
@@ -175,7 +175,6 @@ defmodule VowpalKingpin do
     :ok
   end
 
-  # expire all sessions with epoch before specified one, and attribute cost to all chosen (non clicked) actions
   @spec timeout(pos_integer()) :: :ok
   def timeout(epoch) do
     Mnesia.transaction(fn ->
