@@ -13,10 +13,9 @@ defmodule VowpalKingpin do
     Mnesia.add_table_index(VowpalKingpin, :created_at)
   end
 
-  def start(model_id, explore, mnesia_nodes \\ [node()]) do
+  def start(model_id, bootstrap, mnesia_nodes \\ [node()]) do
     # Application.ensure_all_started(:logger)
     # Application.ensure_all_started(:vowpal_fleet)
-
     start_mnesia(mnesia_nodes)
 
     VowpalFleet.start_worker(model_id, node(), %{
@@ -24,12 +23,18 @@ defmodule VowpalKingpin do
       :args => [
         "--random_seed",
         "123",
-        "--cb_explore",
-        "#{explore}",
-        "--cover",
-        "3",
-        "--num_children",
-        "1"
+        "-b",
+        "21",
+        "--bootstrap",
+        "#{bootstrap}",
+        "-q",
+        "ci",
+        "--loss_function",
+        "logistic",
+        "--link",
+        "logistic",
+        "--ftrl",
+        "--save_resume"
       ]
     })
   end
@@ -42,19 +47,14 @@ defmodule VowpalKingpin do
     Mnesia.dirty_delete({VowpalKingpin, get_session_key(sid, model_id)})
   end
 
-  def fetch_session(sid, model_id, features) do
+  def fetch_session(sid, model_id, context, items) do
     s = Mnesia.dirty_read({VowpalKingpin, get_session_key(sid, model_id)})
 
     if s == [] do
-      %{:features => features, :actions => [], :model => model_id, :now => now()}
+      %{:context => context, :items => items, :model => model_id, :now => now()}
     else
       {_, _, state, _} = Enum.at(s, 0)
-
-      if features == [] do
-        Map.merge(state, %{:features => features})
-      else
-        state
-      end
+      state
     end
   end
 
@@ -62,120 +62,99 @@ defmodule VowpalKingpin do
     :os.system_time(:millisecond)
   end
 
-  def rand() do
-    :rand.uniform()
+  defp prefix_features(p, namespaces) do
+    namespaces
+    |> Enum.map(fn {name, features} ->
+      f =
+        features
+        |> Enum.map(fn e ->
+          case e do
+            {name, value} ->
+              {"#{p}_#{name}", value}
+
+            name ->
+              "#{p}_#{name}"
+          end
+        end)
+
+      {name, f}
+    end)
   end
 
-  def choose(actions, n) do
-    choose(actions, n, [])
-  end
+  def predict(sid, model_id, limit, context, items) do
+    s = fetch_session(sid, model_id, context, items)
+    c = prefix_features("c", context)
 
-  def choose(actions, n, chosen) do
-    # expects sorted list of actions, sorded by descending probability 
-    if length(chosen) == n || length(actions) == 0 do
-      chosen
-    else
-      r = rand()
-      c = Enum.find(actions, Enum.at(actions, 0), fn {_, prob} -> prob >= r end)
-      chosen = chosen ++ [c]
-
-      actions =
-        actions
-        |> Enum.filter(fn x -> x != c end)
-
-      choose(actions, n, chosen)
-    end
-  end
-
-  def predict(sid, model_id, n, features) do
-    s = fetch_session(sid, model_id, features)
-    pred = VowpalFleet.predict(model_id, features)
-
-    actions =
-      pred
-      |> Stream.with_index()
+    out =
+      items
+      |> Enum.map(fn %{id: id, features: features} ->
+        score = VowpalFleet.predict(model_id, merge_features(c, {id, features}))
+        {id, score}
+      end)
       |> Enum.sort(fn {_, pa}, {_, pb} -> pa >= pb end)
-      |> Enum.map(fn {prob, idx} ->
-        {idx + 1, prob}
-      end)
+      |> Enum.take(limit)
 
-    chosen =
-      choose(actions, n)
-      |> Enum.take(n)
-      |> Enum.map(fn {action_id, prob} -> {action_id, prob} end)
-      |> Map.new()
-
-    actions =
-      actions
-      |> Enum.map(fn {action_id, prob} ->
-        chosen_prob = Map.get(chosen, action_id, 0)
-
-        if chosen_prob > 0 do
-          {action_id, chosen_prob, true}
-        else
-          {action_id, prob, false}
-        end
-      end)
-
-    s = Map.merge(s, %{:actions => actions})
     Mnesia.dirty_write({VowpalKingpin, get_session_key(sid, model_id), s, now()})
 
-    {chosen, s}
+    out
   end
 
-  def track(sid, model_id, clicked_action_id) do
-    track(sid, model_id, clicked_action_id, 100)
+  def merge_features(ctx, {id, features}) do
+    ctx ++ prefix_features("i", [{"id", [id]}] ++ features)
   end
 
-  # XXX: what if user clicks to second item after coming back?
-  # is that new pull or same as before
-  # this does not hanle that very well
-  def track(sid, model_id, clicked_action_id, cost_not_clicked) do
-    s = fetch_session(sid, model_id, [])
-    track_session(s, clicked_action_id, cost_not_clicked)
-    delete_session(sid, model_id)
-  end
+  def track(sid, model_id, clicked_actions) do
+    s = Mnesia.dirty_read({VowpalKingpin, get_session_key(sid, model_id)})
 
-  # lets say we have click/convertion on one of the actions
-  # only send to vowpal actions that were possible
-  defp track_session(s, clicked_action_id, cost_not_clicked) do
-    # only send *possible* actions to vw
-    actions_to_train =
-      Map.get(s, :actions, [])
-      |> Enum.filter(fn {_, _, chosen} -> chosen end)
-      |> Enum.map(fn {action_id, prob, chosen} ->
-        cost =
-          case chosen do
-            true ->
-              if action_id == clicked_action_id do
-                0
-              else
-                cost_not_clicked
-              end
+    case s do
+      {_, _, state, _} ->
+        track_session(state, clicked_actions)
+        delete_session(sid, model_id)
 
-            false ->
-              0
-          end
+      [{_, _, state, _}] ->
+        track_session(state, clicked_actions)
+        delete_session(sid, model_id)
 
-        {action_id, cost, prob}
-      end)
-
-    if actions_to_train != [] do
-      VowpalFleet.train(Map.get(s, :model), actions_to_train, Map.get(s, :features))
+      [] ->
+        nil
+        # missing session, ignore
     end
+  end
+
+  defp track_session(%{:context => context, :items => items, :model => model_id}, clicked_actions) do
+    clicked =
+      if is_list(clicked_actions) do
+        clicked_actions |> Enum.map(fn e -> {e, true} end) |> Map.new()
+      else
+        clicked_actions
+      end
+
+    c = prefix_features("c", context)
+
+    v =
+      items
+      |> Enum.map(fn %{id: id, features: features} ->
+        merged = merge_features(c, {id, features})
+
+        if Map.has_key?(clicked, id) do
+          VowpalFleet.train(model_id, 1, merged)
+        else
+          VowpalFleet.train(model_id, -1, merged)
+        end
+      end)
   end
 
   # expire all sessions with epoch before specified one, and attribute cost to all chosen (non clicked) actions
-  def timeout(epoch, cost_not_clicked) do
-    expired =
-      Mnesia.select(VowpalKingpin, [
-        {{VowpalKingpin, :"$1", :"$2", :"$3"}, [{:<, :"$3", epoch}], [:"$$"]}
-      ])
-
+  def timeout(epoch) do
     Mnesia.transaction(fn ->
+      expired =
+        Mnesia.select(VowpalKingpin, [
+          {{VowpalKingpin, :"$1", :"$2", :"$3"}, [{:<, :"$3", epoch}], [:"$$"]}
+        ])
+
       expired
       |> Enum.each(fn {key, s, _} ->
-        track_session(s, -1, cost_not_clicked)
+        track_session(s, [])
         Mnesia.delete({VowpalKingpin, key})
       end)
     end)
